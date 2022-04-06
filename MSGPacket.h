@@ -7,7 +7,4 @@ enum class MSGPacket
 	MakePlayer			= 30,
 	DeletePlayer		= 40,
 	MovePlayer			= 50
-
-
-
 };

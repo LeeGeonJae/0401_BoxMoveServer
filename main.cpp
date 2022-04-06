@@ -2,14 +2,20 @@
 #include <winsock2.h>
 #include <Windows.h>
 #include <string>
+#include <map>
+#include <set>
 #include "MSGPacket.h"
+#include "PlayerData.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
 using namespace std;
 
+
 int main()
 {
+	map<SOCKET, PlayerData> ConnectedPlayer;//Session
+
 	WSADATA wsaData;
 
 	WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -32,8 +38,8 @@ int main()
 
 	TIMEVAL Timeout;
 
-	Timeout.tv_sec = 0;
-	Timeout.tv_usec = 500;
+	Timeout.tv_sec = 1;
+	Timeout.tv_usec = 0;
 
 	FD_ZERO(&Reads);
 	FD_ZERO(&CopyReads);
@@ -45,7 +51,7 @@ int main()
 	char SendData[1024] = { 0, };
 
 
-	while (1)
+	while (true)
 	{
 		CopyReads = Reads;
 
@@ -82,50 +88,84 @@ int main()
 				}
 				else //client prcess
 				{
-					for (int ClientIndex = 0; ClientIndex < (int)Reads.fd_count; ++ClientIndex)
+					int RecvLength = recv(Reads.fd_array[i], Header, 2, 0);
+					if (RecvLength <= 0)
 					{
-						if (Reads.fd_array[ClientIndex] != ServerSocket)
+						//close
+						ConnectedPlayer.erase(Reads.fd_array[i]);
+
+						cout << "Disconnect : " << GetLastError() << endl;
+						closesocket(Reads.fd_array[i]);
+						FD_CLR(Reads.fd_array[i], &Reads);
+					}
+					else
+					{
+						if ((UINT8)Header[0] == (UINT8)MSGPacket::Login)
+						{
+							//packet parsing
+							char Data[15] = { 0, };
+							int RecvLength = recv(Reads.fd_array[i], Data, 15, 0);
+
+							//save session 
+							PlayerData NewPlayerData;
+							NewPlayerData.MakeData(Data);
+							NewPlayerData.ClientSocket = Reads.fd_array[i];
+
+							ConnectedPlayer[NewPlayerData.ClientSocket] = NewPlayerData;
+
+							//reponse
+							SendData[0] = (UINT8)MSGPacket::LoginAck;
+							SendData[1] = (UINT8)15;
+							NewPlayerData.MakePacket(&SendData[2]);
+							send(Reads.fd_array[i], SendData, 15 + 2, 0);
+
+							cout << "save Session : " << Reads.fd_array[i] << endl;
+
+							//이미 접속된 유저 리스트
+							for (auto AlreadyConnectedPlayer : ConnectedPlayer)
+							{
+								//새로 접속한 아이
+								if (AlreadyConnectedPlayer.second.ClientSocket == Reads.fd_array[i])
+								{
+									continue;
+								}
+
+								//새로 접속한 클라이언트 정보를 이미 접속한 클라이언트한테 전송
+								SendData[0] = (UINT8)MSGPacket::MakePlayer;
+								SendData[1] = (UINT8)15;
+								NewPlayerData.MakePacket(&SendData[2]);
+
+								send(AlreadyConnectedPlayer.second.ClientSocket, SendData, 15 + 2, 0);
+							}
+
+							//새로 접속한 클라이언트한테 모든 클라이언트 정보 보내기
+							for (auto AlreadyConnectedPlayer : ConnectedPlayer)
+							{
+								//새로 접속한 아이
+								if (AlreadyConnectedPlayer.second.ClientSocket == Reads.fd_array[i])
+								{
+									continue;
+								}
+
+								//새로 접속한 클라이언트 이미 접속한 클라이언트 정보 보내기
+								SendData[0] = (UINT8)MSGPacket::MakePlayer;
+								SendData[1] = (UINT8)15;
+								AlreadyConnectedPlayer.second.MakePacket(&SendData[2]);
+
+								send(NewPlayerData.ClientSocket, SendData, 15 + 2, 0);
+							}
+
+							cout << "Complete MakePlayer" << endl;
+						}
+						else if ((UINT8)Header[0] == (UINT8)MSGPacket::MovePlayer)
 						{
 
-							int RecvLength = recv(Reads.fd_array[i], Header, 2, 0);
-							if (RecvLength <= 0)
-							{
-								//close
-								cout << GetLastError << endl;
-								closesocket(Reads.fd_array[i]);
-								FD_CLR(Reads.fd_array[i], &Reads);
-							}
-							else
-							{
-								if ((UINT8)Header[0] == (UINT8)MSGPacket::Login)
-								{
-									char Data[3] = { 0, };
-									int RecvLength = recv(Reads.fd_array[i], Data, 3, 0);
-
-									SendData[0] = (UINT8)MSGPacket::LoginAck;
-									SendData[1] = (UINT8)4;
-									memcpy(&SendData[2], &Reads.fd_array[i], 4);
-									send(Reads.fd_array[i], SendData, 6, 0);
-
-									cout << Reads.fd_array[i] << endl;
-								}
-								else if ((UINT8)Header[0] == (UINT8)MSGPacket::MakePlayer)
-								{
-
-								}
-								else if ((UINT8)Header[0] == (UINT8)MSGPacket::MovePlayer)
-								{
-
-								}
-							}
 						}
 					}
 				}
 			}
 		}
 	}
-
-
 
 
 	WSACleanup();
